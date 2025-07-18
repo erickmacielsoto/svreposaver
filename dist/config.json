@@ -1,0 +1,6 @@
+{
+    "idioma": "es",
+    "backup_automatico": false,
+    "intervalo_minutos": 1,
+    "ruta_backup": "C:/Users\\ErickM\\AppData\\LocalLow\\semiwork\\Repo\\saves"
+}
