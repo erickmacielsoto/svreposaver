@@ -1,0 +1,22 @@
+{
+  "title": "SV R.E.P.O Save Manager",
+  "backup_now": "Create Backup",
+  "restore": "Restore Backup",
+  "auto_backup_check": "Enable automatic backup",
+  "auto_backup_interval": "Backup every:",
+  "minutes": "minutes",
+  "select_backup": "Select saves to backup",
+  "no_saves_found": "No saves found to backup.",
+  "accept": "Accept",
+  "select_backup_error": "You must select at least one save.",
+  "backup_success": "Backup created successfully in",
+  "backup_error": "An error occurred while backing up:",
+  "loading": "Processing, please wait...",
+  "restore_success": "Backup restored in",
+  "restore_error": "An error occurred while restoring backup:",
+  "no_saves_found_auto": "No saves found for automatic backup.",
+  "auto_backup_success": "Automatic backup created in:",
+  "auto_backup_error": "Error in automatic backup:",
+  "invalid_input": "Invalid input",
+  "interval_must_be_number": "Interval must be an integer."
+}

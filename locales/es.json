@@ -1,0 +1,22 @@
+{
+  "title": "SV R.E.P.O Save Manager",
+  "backup_now": "Crear Backup",
+  "restore": "Restaurar Backup",
+  "auto_backup_check": "Habilitar backup automático",
+  "auto_backup_interval": "Backup cada:",
+  "minutes": "minutos",
+  "select_backup": "Seleccionar partidas a respaldar",
+  "no_saves_found": "No se encontraron partidas para respaldar.",
+  "accept": "Aceptar",
+  "select_backup_error": "Debes seleccionar al menos una partida.",
+  "backup_success": "Backup creado correctamente en",
+  "backup_error": "Ocurrió un error haciendo backup:",
+  "loading": "Procesando, espere...",
+  "restore_success": "Backup restaurado en",
+  "restore_error": "Ocurrió un error restaurando backup:",
+  "no_saves_found_auto": "No se encontraron partidas para respaldo automático.",
+  "auto_backup_success": "Backup automático creado en:",
+  "auto_backup_error": "Error en backup automático:",
+  "invalid_input": "Entrada inválida",
+  "interval_must_be_number": "El intervalo debe ser un número entero."
+}
