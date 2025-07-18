@@ -697,7 +697,7 @@ intervalo_minutos_var.trace_add("write", on_interval_entry_change)
 bottom_frame = ctk.CTkFrame(root, fg_color="transparent")
 bottom_frame.pack(side="bottom", fill="x", padx=10, pady=5)
 
-credits_label = ctk.CTkLabel(bottom_frame, text="By: elerickmj | TikTok: @elerickmj | Colab: @jasontorresb", font=("Arial", 11))
+credits_label = ctk.CTkLabel(bottom_frame, text="By: elerickmj | TikTok: @elerickmj | Colab: @jasontorresb | Chorestudio®", font=("Arial", 14))
 credits_label.pack(side="left", padx=5)
 
 

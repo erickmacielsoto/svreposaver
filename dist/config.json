@@ -1,6 +1,7 @@
 {
-    "idioma": "es",
-    "backup_automatico": false,
+    "backup_automatico": true,
     "intervalo_minutos": 1,
-    "ruta_backup": "C:/Users\\ErickM\\AppData\\LocalLow\\semiwork\\Repo\\saves"
+    "ruta_backup": "C:/Users\\ErickM\\AppData\\LocalLow\\semiwork\\Repo\\saves",
+    "appearance_mode": "Dark",
+    "idioma": "es"
 }
