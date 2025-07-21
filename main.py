@@ -4,13 +4,13 @@ from tkinter import filedialog, messagebox
 import threading
 import time
 import os
-import json
+import json # Aunque ConfigManager ahora maneja JSON, seguimos usándolo para otras operaciones.
 from PIL import Image, ImageTk
 import sys
 
-# Importar las funciones de los módulos dentro de 'utils'
-from utils import config_manager
-from utils import backup_manager
+# Importar las clases y funciones de los módulos dentro de 'utils'
+from utils.config_manager import ConfigManager
+from utils import backup_manager # Asegúrate de que backup_manager exista y sea funcional
 
 # === Funciones de Utilidad de Ruta (para PyInstaller) ===
 def resource_path(relative_path):
@@ -20,32 +20,32 @@ def resource_path(relative_path):
     return os.path.join(os.path.abspath("."), relative_path)
 
 # === CONFIG INICIAL ===
-config = config_manager.cargar_config()
-idioma_actual = config.get("idioma", "es")
+# Crear una instancia de ConfigManager. El nombre del archivo ahora será "config.json" por defecto.
+# Pasamos el nombre de la aplicación para que ConfigManager sepa dónde crear la carpeta de configuración.
+config_manager_instance = ConfigManager(app_name="SV_REPO_Save_Manager", filename="config.json", locales_path=resource_path("locales"))
 
-modo_actual_ctk = config.get("appearance_mode", "System")
+# Variables globales que almacenan los valores de configuración obtenidos del ConfigManager
+# Accedemos directamente a los valores ya parseados por ConfigManager.
+idioma_actual = config_manager_instance.get_setting('General', 'language')
+modo_actual_ctk = config_manager_instance.get_setting('General', 'appearance_mode')
+
+# La ruta de backup se inicializa aquí o se obtiene desde el config_manager
+ruta_backup_inicial = config_manager_instance.get_setting('Backup', 'ruta_backup')
+if not ruta_backup_inicial or not os.path.exists(ruta_backup_inicial):
+    detected_save_path = backup_manager.obtener_ruta_saves()
+    if detected_save_path:
+        ruta_backup_inicial = detected_save_path
+        config_manager_instance.set_setting("Backup", "ruta_backup", detected_save_path)
+    else:
+        ruta_backup_inicial = os.path.expanduser("~") # Fallback seguro
+        config_manager_instance.set_setting("Backup", "ruta_backup", os.path.expanduser("~"))
+
+
 ctk.set_appearance_mode(modo_actual_ctk)
 ctk.set_default_color_theme("dark-blue")
 
-current_texts = {}
-
-def load_locale_texts(code):
-    locale_file_path = resource_path(os.path.join("locales", f"{code}.json"))
-    try:
-        with open(locale_file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        messagebox.showerror("Error de Carga de Idioma", f"Archivo de idioma no encontrado: {locale_file_path}")
-        return {}
-    except json.JSONDecodeError as e:
-        messagebox.showerror("Error de Carga de Idioma", f"Error al parsear JSON para '{code}' en '{locale_file_path}': {e}")
-        return {}
-    except Exception as e:
-        messagebox.showerror("Error de Carga de Idioma", f"No se pudo cargar idioma '{code}' desde '{locale_file_path}': {e}")
-        return {}
-
-current_texts = load_locale_texts(idioma_actual)
-
+# current_texts ahora se carga directamente desde la instancia de ConfigManager
+current_texts = config_manager_instance.current_locales
 
 # --- Archivos y carpetas ---
 FLAGS_DIR = "flags"
@@ -127,7 +127,7 @@ lbl_min = None
 entrada_min = None
 lbl_mins = None
 ventana_cargando = None
-credits_label = None
+credits_label = None # Se mantiene tu credits_label original
 lbl_timer_auto_backup = None # Nueva etiqueta para el timer
 timer_auto_backup_var = None # Nueva variable para el texto del timer
 
@@ -138,49 +138,82 @@ ICON_PATH = resource_path("icon.ico")
 # --- Funciones de la UI ---
 
 # Nueva función para mostrar mensajes temporales
-def show_timed_message(title, message, duration_ms=7000):
-    """Muestra un mensaje en una ventana flotante que se cierra automáticamente."""
-    
-    # Si ya existe una ventana de mensaje, la cerramos para no tener múltiples
+
+_timed_message_window = None # Variable global para controlar la ventana de mensaje temporal
+
+def show_timed_message(message, duracion_ms=7000):
+    """
+    Muestra una notificación discreta en la esquina superior derecha de la pantalla (área total de monitores).
+    No roba el foco.
+    """
     global _timed_message_window
-    if '_timed_message_window' in globals() and _timed_message_window and _timed_message_window.winfo_exists():
+
+    # Si ya existe una ventana de mensaje, la cerramos para no tener múltiples
+    if _timed_message_window and _timed_message_window.winfo_exists():
         _timed_message_window.destroy()
 
     _timed_message_window = ctk.CTkToplevel(root)
-    _timed_message_window.geometry("350x150")
-    _timed_message_window.title(title)
-    _timed_message_window.attributes("-topmost", True) # Mantenerla siempre encima
-    if os.path.exists(ICON_PATH):
-        try:
-            _timed_message_window.iconbitmap(ICON_PATH)
-        except Exception as e:
-            # Puedes cambiar esto a un print si no quieres un messagebox por cada error de icono temporal
-            print(f"Error al cargar icono para ventana de mensaje temporal: {e}")
+    _timed_message_window.overrideredirect(True)  # Elimina bordes y barra de título
+    _timed_message_window.attributes('-topmost', False) # Desactiva "siempre encima" por defecto
 
-    # Centrar la ventana temporal
-    root.update_idletasks() # Asegurarse de que las dimensiones de root estén actualizadas
-    root_x = root.winfo_x()
-    root_y = root.winfo_y()
-    root_width = root.winfo_width()
-    root_height = root.winfo_height()
+    # Configura la apariencia del mensaje
+    current_appearance_mode = ctk.get_appearance_mode()
+    bg_color = "#333333" if current_appearance_mode == "Dark" else "#EEEEEE"
+    text_color = "#FFFFFF" if current_appearance_mode == "Dark" else "#000000"
 
-    msg_width = 350
-    msg_height = 150
-    x_pos = root_x + (root_width // 2) - (msg_width // 2)
-    y_pos = root_y + (root_height // 2) - (msg_height // 2)
-    _timed_message_window.geometry(f"{msg_width}x{msg_height}+{x_pos}+{y_pos}")
+    _timed_message_window.configure(fg_color=bg_color, corner_radius=10)
+    _timed_message_window.attributes('-alpha', 0.9) # Semi-transparente
 
-    label_message = ctk.CTkLabel(_timed_message_window, text=message, wraplength=300, justify="center")
-    label_message.pack(expand=True, fill="both", padx=20, pady=20)
-    
-    # Programar el cierre automático
-    _timed_message_window.after(duration_ms, _timed_message_window.destroy)
+    # Contenido del mensaje
+    label_mensaje = ctk.CTkLabel(
+        _timed_message_window,
+        text=message,
+        font=ctk.CTkFont(size=14, weight="bold"),
+        text_color=text_color,
+        wraplength=300, # Para que el texto se ajuste
+        justify="center"
+    )
+    label_mensaje.pack(padx=20, pady=10)
 
+    # Posicionar en la esquina superior derecha de la PANTALLA TOTAL
+    _timed_message_window.update_idletasks() # Asegúrate de que tenga sus dimensiones correctas
+    notificacion_width = _timed_message_window.winfo_width()
+    notificacion_height = _timed_message_window.winfo_height()
+
+    # Obtener el ancho y alto total de la pantalla combinada
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight() # No se usa directamente para la posición Y, pero es útil
+
+    # Margen para que no quede pegado al borde
+    margin_x = 20 # Margen desde el lado derecho
+    margin_y = 20 # Margen desde la parte superior
+
+    # Calcular la posición x e y de la ventana de notificación
+    # x = (ancho total de pantalla) - (ancho de notificación) - (margen)
+    # y = (margen)
+    x = screen_width - notificacion_width - margin_x
+    y = margin_y
+
+    _timed_message_window.geometry(f"+{x}+{y}")
+
+    # Opcional: Asegúrate de que no tenga un ícono en la barra de tareas (solo Windows)
+    if sys.platform == "win32":
+        _timed_message_window.wm_attributes("-toolwindow", True)
+        # Podríamos intentar hacerla siempre-encima si no roba foco, pero a veces interfiere.
+        #_timed_message_window.attributes('-topmost', True)
+
+
+    # Cierra la ventana automáticamente después de un tiempo
+    _timed_message_window.after(duracion_ms, _timed_message_window.destroy)
 
 def update_ui_texts():
     """Actualiza todos los textos y las imágenes de la interfaz de usuario."""
     global current_texts, idioma_actual, img_bandera_ctk
-    
+
+    # Recargar textos del idioma actual usando la instancia de ConfigManager
+    config_manager_instance.load_locales(idioma_actual)
+    current_texts = config_manager_instance.current_locales
+
     root.title(current_texts.get("title", "SV R.E.P.O Save Manager"))
     titulo.configure(text=current_texts.get("title", "SV R.E.P.O Save Manager"))
     btn_backup.configure(text=current_texts.get("backup_now", "Crear Backup"))
@@ -190,22 +223,22 @@ def update_ui_texts():
     lbl_mins.configure(text=current_texts.get("minutes", "minutos"))
 
     # --- Lógica para el icono del botón de modo (Sol/Luna) ---
-    actual_ctk_mode = ctk.get_appearance_mode() 
-    
+    actual_ctk_mode = ctk.get_appearance_mode()
+
     if actual_ctk_mode == "Dark":
         if img_sun_ctk:
             modo_btn.configure(image=img_sun_ctk, text="")
         else:
-            modo_btn.configure(image=None, text="☀️") 
+            modo_btn.configure(image=None, text="☀️")
     else: # Light (o System que se resolvió a Light)
         if img_moon_ctk:
             modo_btn.configure(image=img_moon_ctk, text="")
         else:
-            modo_btn.configure(image=None, text="🌙") 
-    
+            modo_btn.configure(image=None, text="🌙")
+
     # Forzar la actualización visual del botón de modo
     if modo_btn: # Asegurarse de que el botón existe antes de intentar actualizarlo
-        modo_btn.update_idletasks() 
+        modo_btn.update_idletasks()
 
     # Configurar íconos de los botones de acción
     if sync_img_ctk:
@@ -221,7 +254,7 @@ def update_ui_texts():
 
     # --- Ajuste de color de texto para modo claro/oscuro ---
     text_color_for_current_mode = "white" if actual_ctk_mode == "Dark" else "black"
-    
+
     titulo.configure(text_color=text_color_for_current_mode)
     btn_backup.configure(text_color=text_color_for_current_mode)
     btn_restaurar.configure(text_color=text_color_for_current_mode)
@@ -229,11 +262,12 @@ def update_ui_texts():
     lbl_min.configure(text_color=text_color_for_current_mode)
     lbl_mins.configure(text_color=text_color_for_current_mode)
     lbl_ruta.configure(text_color=text_color_for_current_mode)
-    if credits_label: 
+    # Se mantienen tus créditos originales
+    if credits_label:
         credits_label.configure(text_color=text_color_for_current_mode)
     if lbl_timer_auto_backup: # Actualizar color del timer
         lbl_timer_auto_backup.configure(text_color=text_color_for_current_mode)
-    
+
     # !!! IMPORTANTE: Actualizar el mensaje del timer de backup automático al cambiar de idioma
     update_auto_backup_timer_ui()
 
@@ -245,10 +279,10 @@ def update_ui_texts():
             img_bandera_ctk = ctk.CTkImage(light_image=img_flag_pil, dark_image=img_flag_pil, size=(28,18))
             bandera_lbl.configure(image=img_bandera_ctk, text="")
         else:
-            bandera_lbl.configure(image=None, text="") 
+            bandera_lbl.configure(image=None, text="")
     except Exception as e:
         messagebox.showerror("Error de Carga de Bandera", f"Ocurrió un error al cargar la bandera para '{idioma_actual}': {e}")
-        bandera_lbl.configure(image=None, text="") 
+        bandera_lbl.configure(image=None, text="")
 
     # Actualizar el texto de la ventana de carga si está abierta
     if ventana_cargando and ventana_cargando.winfo_exists():
@@ -262,8 +296,9 @@ def select_backup_folder():
     path = filedialog.askdirectory(title=current_texts.get("select_backup_folder", "Selecciona carpeta para guardar backup"))
     if path:
         ruta_backup_var.set(path)
-        config["ruta_backup"] = path
-        config_manager.guardar_config(config)
+        config_manager_instance.set_setting("Backup", "ruta_backup", path) # Guardar en el archivo config.json
+        show_timed_message(current_texts.get("folder_selected_success", "Carpeta de backup seleccionada con éxito!"))
+
 
 def create_backup_thread_wrapper(selected_saves, destination_path):
     try:
@@ -271,12 +306,12 @@ def create_backup_thread_wrapper(selected_saves, destination_path):
         backup_manager.crear_backup_zip(selected_saves, destination_path)
         root.after(0, hide_loading_window)
         # Usar la nueva función para mensajes temporales
-        root.after(0, lambda: show_timed_message(current_texts.get("backup_now", "Backup"),
-                                                   f"{current_texts.get('backup_success','Backup creado correctamente en:')}:\n{destination_path}"))
+        root.after(0, lambda: show_timed_message(
+                                                f"{current_texts.get('backup_success','Backup creado correctamente en:')}\n{destination_path}"))
     except Exception as e:
         root.after(0, hide_loading_window)
         root.after(0, lambda: messagebox.showerror(current_texts.get("backup_now", "Backup"),
-                                                    f"{current_texts.get('backup_error','Ocurrió un error haciendo backup:')}\n{e}"))
+                                                     f"{current_texts.get('backup_error','Ocurrió un error haciendo backup:')}\n{e}"))
 
 def create_backup_dialog():
     saves_list = backup_manager.listar_partidas()
@@ -296,12 +331,12 @@ def create_backup_dialog():
             dialog_window.iconbitmap(ICON_PATH)
         except Exception as e:
             messagebox.showerror("Error de Icono de Diálogo", f"No se pudo cargar icon.ico para la ventana de diálogo: {e}")
-    
+
     current_appearance_mode = ctk.get_appearance_mode()
     dialog_window.configure(fg_color="#1f1f1f" if current_appearance_mode == "Dark" else "#f0f0f0")
 
     checkbox_vars = []
-    scrollable_frame = ctk.CTkScrollableFrame(dialog_window, width=330, height=380, fg_color="transparent") 
+    scrollable_frame = ctk.CTkScrollableFrame(dialog_window, width=330, height=380, fg_color="transparent")
     scrollable_frame.pack(padx=10, pady=10, fill="both", expand=True)
 
     for save in saves_list:
@@ -325,9 +360,9 @@ def create_backup_dialog():
     confirm_button.pack(pady=10)
 
 def restore_backup_ui():
-    default_folder = backup_manager.obtener_ruta_saves()
+    default_folder = ruta_backup_var.get() # Usar la carpeta de backup configurada como initialdir
     if not os.path.exists(default_folder):
-        default_folder = os.path.expanduser("~")
+        default_folder = os.path.expanduser("~") # Fallback si la ruta configurada no existe
 
     zip_file_path = filedialog.askopenfilename(
         title=current_texts.get("restore", "Seleccionar archivo ZIP de backup"),
@@ -341,12 +376,12 @@ def restore_backup_ui():
         restored_destination = backup_manager.restaurar_backup_zip(zip_file_path)
         root.after(0, hide_loading_window)
         # Usar la nueva función para mensajes temporales
-        root.after(0, lambda: show_timed_message(current_texts.get("restore", "Restaurar"),
-                                                   f"{current_texts.get('restore_success','Backup restaurado en:')}:\n{restored_destination}"))
+        root.after(0, lambda: show_timed_message(
+                                                f"{current_texts.get('restore_success','Backup restaurado en:')}:\n{restored_destination}"))
     except Exception as e:
         root.after(0, hide_loading_window)
         root.after(0, lambda: messagebox.showerror(current_texts.get("restore", "Restaurar"),
-                                                    f"{current_texts.get('restore_error','Ocurrió un error restaurando backup:')}\n{e}"))
+                                                     f"{current_texts.get('restore_error','Ocurrió un error restaurando backup:')}\n{e}"))
 
 def show_loading_window():
     global ventana_cargando
@@ -389,79 +424,79 @@ def hide_loading_window():
 def change_language_optionmenu(choice):
     global idioma_actual, current_texts
     idioma_actual = choice
-    config["idioma"] = idioma_actual
-    config_manager.guardar_config(config)
-    current_texts = load_locale_texts(idioma_actual)
+    config_manager_instance.set_setting("General", "language", idioma_actual) # Guardar en el archivo config.json
     update_ui_texts() # Esta función ahora llamará a update_auto_backup_timer_ui
 
 def toggle_appearance_mode():
     current_ctk_mode = ctk.get_appearance_mode()
-    
+
     new_mode = ""
     if current_ctk_mode == "Light":
         new_mode = "Dark"
     elif current_ctk_mode == "Dark":
         new_mode = "Light"
-    elif current_ctk_mode == "System": 
-        system_actual_mode = root._get_appearance_mode() 
+    elif current_ctk_mode == "System":
+        system_actual_mode = root._get_appearance_mode()
         new_mode = "Light" if system_actual_mode == "Dark" else "Dark"
 
     ctk.set_appearance_mode(new_mode)
-    config["appearance_mode"] = new_mode 
-    config_manager.guardar_config(config)
-    update_ui_texts() 
+    config_manager_instance.set_setting("General", "appearance_mode", new_mode) # Guardar en el archivo config.json
+    update_ui_texts()
 
 _auto_backup_thread_instance = None
-_auto_backup_running_flag = False 
+_auto_backup_running_flag = False
 _next_backup_time = 0 # Almacena el timestamp de la próxima ejecución
-_timed_message_window = None # Variable global para controlar la ventana de mensaje temporal
 
 def update_auto_backup_timer_ui():
     """Actualiza la etiqueta del timer de backup automático."""
     global _next_backup_time
 
     if not backup_automatico_var.get() or not _auto_backup_running_flag:
-        # Aquí es donde se establece el mensaje cuando el backup automático está deshabilitado
         timer_auto_backup_var.set(current_texts.get("auto_backup_timer_off", "Backup automático deshabilitado."))
-        lbl_timer_auto_backup.configure(text_color="gray") # Color más tenue cuando está inactivo
+        lbl_timer_auto_backup.configure(text_color="gray")
         return
-    
-    # Calcular tiempo restante
+
     time_left_seconds = max(0, int(_next_backup_time - time.time()))
-    
+
     minutes = time_left_seconds // 60
     seconds = time_left_seconds % 60
-    
+
     timer_text = current_texts.get("auto_backup_next_in", "Próximo backup en: {0:02d}:{1:02d} (min:seg)")
     timer_auto_backup_var.set(timer_text.format(minutes, seconds))
 
-    # Cambiar color basado en el tiempo restante (opcional, para énfasis)
-    if time_left_seconds < 60: # Menos de 1 minuto, color de advertencia
+    if time_left_seconds < 60 and time_left_seconds > 0:
         lbl_timer_auto_backup.configure(text_color="orange")
+    elif time_left_seconds == 0:
+        timer_auto_backup_var.set(current_texts.get("auto_backup_timer_running", "Realizando backup..."))
+        lbl_timer_auto_backup.configure(text_color="green")
     else:
-        # Resetear al color por defecto del modo actual
         actual_ctk_mode = ctk.get_appearance_mode()
         text_color_for_current_mode = "white" if actual_ctk_mode == "Dark" else "black"
         lbl_timer_auto_backup.configure(text_color=text_color_for_current_mode)
-    
-    # Reprogramar la actualización
+
     if time_left_seconds > 0 and _auto_backup_running_flag:
-        root.after(1000, update_auto_backup_timer_ui) # Actualizar cada segundo
+        root.after(1000, update_auto_backup_timer_ui)
     elif time_left_seconds == 0 and _auto_backup_running_flag:
-        # Si el tiempo llegó a 0 y el backup aún debe correr, actualizar para reflejar la copia
-        timer_auto_backup_var.set(current_texts.get("auto_backup_timer_running", "Realizando backup..."))
-        lbl_timer_auto_backup.configure(text_color="green")
+        pass
 
 
 def start_auto_backup_thread():
+    """
+    Inicia el hilo de backup automático si no está ya corriendo.
+    Configura _next_backup_time para el primer intervalo.
+    """
     global _auto_backup_thread_instance, _auto_backup_running_flag, _next_backup_time
 
-    if _auto_backup_running_flag: 
+    if _auto_backup_running_flag:
         return
 
-    _auto_backup_running_flag = True 
+    _auto_backup_running_flag = True
+    current_interval = intervalo_minutos_var.get()
 
-    def auto_backup_loop():
+    _next_backup_time = time.time() + (current_interval * 60)
+    root.after(0, update_auto_backup_timer_ui)
+
+    def auto_backup_loop_worker():
         global _auto_backup_running_flag, _next_backup_time
         while _auto_backup_running_flag and backup_automatico_var.get():
             try:
@@ -471,93 +506,206 @@ def start_auto_backup_thread():
                         current_texts.get("auto_backup_warning_title", "Advertencia de Backup Automático"),
                         current_texts.get("invalid_interval_stop", f"Intervalo de backup automático inválido ({current_interval}). Deteniendo hilo.")
                     ))
-                    break 
+                    break
+
+                time_to_sleep = max(0, _next_backup_time - time.time())
+                if time_to_sleep > 0:
+                    time.sleep(time_to_sleep)
+
+                if not (_auto_backup_running_flag and backup_automatico_var.get()):
+                    break
+
+                root.after(0, internal_auto_backup_logic)
 
                 _next_backup_time = time.time() + (current_interval * 60)
-                root.after(0, update_auto_backup_timer_ui) 
+                root.after(0, update_auto_backup_timer_ui)
 
-                time.sleep(current_interval * 60)
-
-                if _auto_backup_running_flag and backup_automatico_var.get():
-                    root.after(0, internal_auto_backup_logic)
-                else:
-                    break 
             except Exception as e:
                 root.after(0, lambda: messagebox.showerror(
                     current_texts.get("auto_backup_error_title", "Error en Backup Automático"),
                     current_texts.get("unexpected_error_auto", f"Ocurrió un error inesperado en el bucle de backup automático: {e}")
                 ))
-                break 
-        _auto_backup_running_flag = False 
-        root.after(0, update_auto_backup_timer_ui) 
+                break
+
+        _auto_backup_running_flag = False
+        root.after(0, update_auto_backup_timer_ui)
 
     def internal_auto_backup_logic():
-        saves_to_backup = backup_manager.listar_partidas()
+        # Retrieve saves to backup from the config_manager instance (directamente como lista)
+        saves_to_backup = config_manager_instance.get_setting("Backup", "partidas_auto_backup")
+
         if not saves_to_backup:
-            root.after(0, lambda: messagebox.showwarning(
-                current_texts.get("auto_backup_warning_title", "Advertencia de Backup Automático"), 
-                current_texts.get("no_saves_found_auto", "No se encontraron partidas para respaldo automático.")
+            root.after(0, lambda: show_timed_message(
+                current_texts.get("auto_backup_warning_title", "Advertencia de Backup Automático") + ":\n" +
+                current_texts.get("no_saves_selected_auto", "No hay partidas seleccionadas para el respaldo automático. Por favor, selecciona algunas en la configuración.")
             ))
+            backup_automatico_var.set(False)
+            toggle_auto_backup()
             return
 
         destination = ruta_backup_var.get()
-        if not destination:
-            destination = backup_manager.obtener_ruta_saves()
-        
+        if not destination or not os.path.exists(destination):
+            root.after(0, lambda: messagebox.showwarning(
+                current_texts.get("auto_backup_warning_title", "Advertencia de Backup Automático"),
+                current_texts.get("select_backup_folder", "Debes seleccionar una carpeta de backup válida para el backup automático.")
+            ))
+            backup_automatico_var.set(False)
+            toggle_auto_backup()
+            return
+
         try:
             backup_manager.crear_backup_zip(saves_to_backup, destination)
-            # Usar la nueva función para mensajes temporales
-            root.after(0, lambda: show_timed_message(current_texts.get("auto_backup_success_title", "Backup Automático"), 
-                                 f"{current_texts.get('auto_backup_success', 'Backup automático creado en:')} {destination} (a las {time.strftime('%H:%M:%S')})"))
+            root.after(0, lambda: show_timed_message(
+                                   f"{current_texts.get('auto_backup_success', 'Backup automático creado en:')} {destination} (a las {time.strftime('%H:%M:%S')})"))
         except Exception as e:
-            root.after(0, lambda: messagebox.showerror(current_texts.get("auto_backup_error_title", "Error en Backup Automático"), 
-                                 f"{current_texts.get('auto_backup_error', 'Error en backup automático:')} {e}"))
+            root.after(0, lambda: messagebox.showerror(current_texts.get("auto_backup_error_title", "Error en Backup Automático"),
+                                                       f"{current_texts.get('auto_backup_error', 'Error en backup automático:')} {e}"))
 
-    _auto_backup_thread_instance = threading.Thread(target=auto_backup_loop, daemon=True)
+    _auto_backup_thread_instance = threading.Thread(target=auto_backup_loop_worker, daemon=True)
     _auto_backup_thread_instance.start()
-    root.after(0, update_auto_backup_timer_ui)
+
+
+def show_select_auto_backup_dialog():
+    """Muestra un diálogo para que el usuario seleccione las partidas para el backup automático."""
+    saves_list = backup_manager.listar_partidas()
+    if not saves_list:
+        messagebox.showwarning(current_texts.get("auto_backup_warning_title", "Advertencia de Backup Automático"),
+                               current_texts.get("no_saves_found", "No se encontraron partidas para respaldar."))
+        backup_automatico_var.set(False)
+        toggle_auto_backup()
+        return
+
+    dialog_window = ctk.CTkToplevel(root)
+    dialog_window.title(current_texts.get("select_auto_backup_games", "Seleccionar partidas para backup automático"))
+    dialog_window.geometry("350x460")
+    dialog_window.grab_set()
+    dialog_window.focus()
+    dialog_window.transient(root)
+    if os.path.exists(ICON_PATH):
+        try:
+            dialog_window.iconbitmap(ICON_PATH)
+        except Exception as e:
+            print(f"Error al cargar icono para ventana de selección de auto-backup: {e}")
+
+    current_appearance_mode = ctk.get_appearance_mode()
+    dialog_window.configure(fg_color="#1f1f1f" if current_appearance_mode == "Dark" else "#f0f0f0")
+
+    checkbox_vars = {}
+    # Obtener la lista de partidas seleccionadas directamente como una lista desde el JSON
+    selected_for_auto = config_manager_instance.get_setting("Backup", "partidas_auto_backup") or []
+
+    scrollable_frame = ctk.CTkScrollableFrame(dialog_window, width=330, height=380, fg_color="transparent")
+    scrollable_frame.pack(padx=10, pady=10, fill="both", expand=True)
+
+    for save in saves_list:
+        is_selected = save in selected_for_auto
+        var = tk.BooleanVar(value=is_selected)
+        chk = ctk.CTkCheckBox(scrollable_frame, text=save, variable=var)
+        chk.pack(anchor="w", pady=2, padx=10)
+        checkbox_vars[save] = var
+
+    def confirm_selection_auto():
+        selected_saves_list = [save for save, var in checkbox_vars.items() if var.get()]
+        if not selected_saves_list:
+            messagebox.showwarning(current_texts.get("select_auto_backup_games", "Seleccionar partidas"),
+                                   current_texts.get("select_backup_error", "Debes seleccionar al menos una partida."))
+            return
+
+        # Guardar la lista directamente, ya que el JSON la maneja como lista
+        config_manager_instance.set_setting("Backup", "partidas_auto_backup", selected_saves_list)
+        dialog_window.destroy()
+
+        start_auto_backup_thread()
+
+    def cancel_selection_auto():
+        backup_automatico_var.set(False)
+        toggle_auto_backup()
+        dialog_window.destroy()
+
+    confirm_button = ctk.CTkButton(dialog_window, text=current_texts.get("accept", "Aceptar"), command=confirm_selection_auto,
+                                   fg_color=("#EAEAEA", "#333333"), hover_color=("#D5D5D5", "#444444"))
+    confirm_button.pack(side="left", padx=(10, 5), pady=10)
+
+    cancel_button = ctk.CTkButton(dialog_window, text=current_texts.get("cancel", "Cancelar"), command=cancel_selection_auto,
+                                   fg_color=("#EAEAEA", "#333333"), hover_color=("#D5D5D5", "#444444"))
+    cancel_button.pack(side="right", padx=(5, 10), pady=10)
+
+    dialog_window.protocol("WM_DELETE_WINDOW", cancel_selection_auto)
 
 
 def toggle_auto_backup():
+    """
+    Gestiona el estado del checkbox de backup automático.
+    Guarda la configuración y activa/desactiva el hilo según sea necesario.
+    """
     global _auto_backup_running_flag
 
-    config["backup_automatico"] = backup_automatico_var.get()
+    # Update config.json with the current state of the checkbox (booleano directo)
+    config_manager_instance.set_setting("Backup", "automatico", backup_automatico_var.get())
+
     try:
         new_interval = int(intervalo_minutos_var.get())
         if new_interval > 0:
-            config["intervalo_minutos"] = new_interval
+            # Guardar el entero directamente
+            config_manager_instance.set_setting("Backup", "intervalo_minutos", new_interval)
         else:
             raise ValueError("Intervalo debe ser un número positivo.")
     except ValueError:
-        config["intervalo_minutos"] = 5
-        intervalo_minutos_var.set(5)
+        # Revert to last valid interval from config if input is invalid
+        default_interval = config_manager_instance.get_setting('Backup', 'intervalo_minutos') # Leer el entero
+        if default_interval is None: default_interval = 5 # Fallback si no existe en el JSON
+        intervalo_minutos_var.set(default_interval)
         messagebox.showwarning(current_texts.get("invalid_input", "Entrada inválida"),
-                               current_texts.get("interval_must_be_number", "El intervalo debe ser un número entero y positivo."))
+                               current_texts.get("interval_must_be_positive", "El intervalo debe ser un número entero y positivo."))
+        # If interval is invalid, auto-backup cannot be active
+        if backup_automatico_var.get():
+            backup_automatico_var.set(False)
+            config_manager_instance.set_setting("Backup", "automatico", False) # Guardar booleano
+            _auto_backup_running_flag = False
+            root.after(0, update_auto_backup_timer_ui)
+            return
 
-    config["ruta_backup"] = ruta_backup_var.get()
-    config_manager.guardar_config(config)
-    
+    # No need to save ruta_backup here, as select_backup_folder already handles it
+
     if backup_automatico_var.get():
-        start_auto_backup_thread()
+        # Leer la lista directamente
+        selected_for_auto = config_manager_instance.get_setting("Backup", "partidas_auto_backup") or []
+
+        if not selected_for_auto:
+            show_select_auto_backup_dialog()
+        elif messagebox.askyesno(
+            current_texts.get("change_auto_backup_selection_title", "Cambiar selección de backup automático"),
+            current_texts.get("change_auto_backup_selection_question", "¿Deseas cambiar las partidas seleccionadas para el backup automático? (Selecciona 'No' para usar las actuales y activar)")
+        ):
+            show_select_auto_backup_dialog()
+        else:
+            # If the user chooses not to change the selection, just start the thread
+            if _auto_backup_running_flag:
+                _auto_backup_running_flag = False
+                if _auto_backup_thread_instance and _auto_backup_thread_instance.is_alive():
+                    _auto_backup_thread_instance.join(timeout=1)
+            start_auto_backup_thread()
     else:
-        _auto_backup_running_flag = False 
-        root.after(0, update_auto_backup_timer_ui) 
+        _auto_backup_running_flag = False
+        root.after(0, update_auto_backup_timer_ui)
 
 
 # --- Función para manejar el cierre de la ventana ---
 def on_closing():
     global _auto_backup_running_flag
-    if backup_automatico_var.get(): 
+    if backup_automatico_var.get() and _auto_backup_running_flag:
         if messagebox.askyesno(
             current_texts.get("exit_confirm_title", "Confirmar salida"),
             current_texts.get("exit_warning_auto_backup", "El backup automático está habilitado. Si cierras el programa, los backups automáticos NO se realizarán.\n\n¿Deseas salir de todas formas?")
         ):
-            _auto_backup_running_flag = False 
-            root.destroy() 
+            _auto_backup_running_flag = False
+            if _auto_backup_thread_instance and _auto_backup_thread_instance.is_alive():
+                _auto_backup_thread_instance.join(timeout=2)
+            root.destroy()
         else:
-            pass 
+            pass
     else:
-        root.destroy() 
+        root.destroy()
 
 # --- Construcción de la UI ---
 root = ctk.CTk()
@@ -569,18 +717,14 @@ root.protocol("WM_DELETE_WINDOW", on_closing)
 
 
 # Variables de control Tkinter
-backup_automatico_var = tk.BooleanVar(master=root, value=config.get("backup_automatico", False))
-ruta_backup_var = tk.StringVar(master=root, value=config.get("ruta_backup", backup_manager.obtener_ruta_saves()))
-intervalo_minutos_var = tk.IntVar(master=root, value=config.get("intervalo_minutos", 5))
+backup_automatico_var = tk.BooleanVar(master=root, value=config_manager_instance.get_setting("Backup", "automatico"))
+ruta_backup_var = tk.StringVar(master=root, value=ruta_backup_inicial) # Usa la ruta inicial calculada
+intervalo_minutos_var = tk.IntVar(master=root, value=config_manager_instance.get_setting("Backup", "intervalo_minutos"))
 
-# === MODIFICACIÓN CLAVE AQUÍ: Inicializar timer_auto_backup_var con el texto correcto ===
-if backup_automatico_var.get():
-    # Si está habilitado desde el inicio (según la config), el texto inicial será el del timer corriendo/próximo
-    # pero el valor exacto se establecerá en la primera llamada a update_auto_backup_timer_ui
-    timer_auto_backup_var = tk.StringVar(master=root, value="") 
-else:
-    # Si no está habilitado, establecer el mensaje de deshabilitado desde el inicio
-    timer_auto_backup_var = tk.StringVar(master=root, value=current_texts.get("auto_backup_timer_off", "Backup automático deshabilitado."))
+# === Inicializar timer_auto_backup_var con el texto correcto ===
+timer_auto_backup_var = tk.StringVar(master=root, value="")
+if not backup_automatico_var.get():
+    timer_auto_backup_var.set(current_texts.get("auto_backup_timer_off", "Backup automático deshabilitado."))
 
 
 # Configurar el icono de la ventana principal usando icon.ico
@@ -598,24 +742,20 @@ titulo = ctk.CTkLabel(top_frame, text=current_texts.get("title", "SV R.E.P.O Sav
 titulo.pack(side="left")
 
 # --- Alineación de elementos a la derecha en top_frame ---
-# El orden de pack() importa para side="right": el último se pega más a la derecha.
-# 1. Botón de modo (más a la derecha)
-modo_btn = ctk.CTkButton(top_frame, width=50, command=toggle_appearance_mode, 
-                         fg_color="transparent", hover_color=("#EAEAEA", "#2A2D2E")) 
+modo_btn = ctk.CTkButton(top_frame, width=50, command=toggle_appearance_mode,
+                          fg_color="transparent", hover_color=("#EAEAEA", "#2A2D2E"))
 modo_btn.pack(side="right", padx=(10, 0))
 
-# 2. Selector de idioma - Sin fg_color transparente para el OptionMenu principal
 language_options = list(idiomas_banderas.keys())
 idioma_menu = ctk.CTkOptionMenu(top_frame, values=language_options,
                                  command=change_language_optionmenu,
                                  width=40,
-                                 dropdown_fg_color=("#EAEAEA", "#333333"), 
+                                 dropdown_fg_color=("#EAEAEA", "#333333"),
                                  )
 idioma_menu.set(idioma_actual)
 idioma_menu.pack(side="right", padx=5)
 
-# 3. Etiqueta para la bandera
-bandera_lbl = ctk.CTkLabel(top_frame, text="") 
+bandera_lbl = ctk.CTkLabel(top_frame, text="")
 bandera_lbl.pack(side="right", padx=(0, 5))
 
 
@@ -625,28 +765,28 @@ center_frame.pack(pady=10, fill="both", expand=True)
 # === ESTRUCTURA DE BOTONES PARA ALINEACIÓN VERTICAL Y HORIZONTAL ===
 
 buttons_main_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
-buttons_main_frame.pack(pady=(0, 10)) 
+buttons_main_frame.pack(pady=(0, 10))
 
 create_backup_group_frame = ctk.CTkFrame(buttons_main_frame, fg_color="transparent")
-create_backup_group_frame.pack(pady=(0, 5)) 
+create_backup_group_frame.pack(pady=(0, 5))
 
 btn_backup = ctk.CTkButton(create_backup_group_frame, text=current_texts.get("backup_now", "Crear Backup"), command=create_backup_dialog,
-                           fg_color=("#EAEAEA", "#333333"), hover_color=("#D5D5D5", "#444444"), 
-                           image=sync_img_ctk, compound="left") 
+                            fg_color=("#EAEAEA", "#333333"), hover_color=("#D5D5D5", "#444444"),
+                            image=sync_img_ctk, compound="left")
 btn_backup.pack(side="left", padx=(0, 2))
 
 btn_carpeta = ctk.CTkButton(create_backup_group_frame, text="", image=folder_img_ctk, width=40, command=select_backup_folder,
-                           fg_color=("#EAEAEA", "#333333"), hover_color=("#D5D5D5", "#444444")) 
+                             fg_color=("#EAEAEA", "#333333"), hover_color=("#D5D5D5", "#444444"))
 btn_carpeta.pack(side="left", padx=(2, 0))
 
 
 restore_backup_group_frame = ctk.CTkFrame(buttons_main_frame, fg_color="transparent")
-restore_backup_group_frame.pack(pady=(5, 0)) 
+restore_backup_group_frame.pack(pady=(5, 0))
 
 btn_restaurar = ctk.CTkButton(restore_backup_group_frame, text=current_texts.get("restore", "Restaurar Backup"), command=restore_backup_ui,
                               fg_color=("#EAEAEA", "#333333"), hover_color=("#D5D5D5", "#444444"),
                               image=data_recovery_img_ctk, compound="left")
-btn_restaurar.pack() 
+btn_restaurar.pack()
 
 
 lbl_ruta = ctk.CTkLabel(center_frame, textvariable=ruta_backup_var, wraplength=700)
@@ -667,29 +807,30 @@ entrada_min.pack(side="left", padx=(0, 5))
 lbl_mins = ctk.CTkLabel(frame_min, text=current_texts.get("minutes", "minutos"))
 lbl_mins.pack(side="left")
 
-# Nueva etiqueta para el timer del backup automático
 lbl_timer_auto_backup = ctk.CTkLabel(center_frame, textvariable=timer_auto_backup_var, font=("Arial", 12, "bold"))
 lbl_timer_auto_backup.pack(pady=(10, 0))
 
 
 def on_interval_entry_change(*args):
-    global _auto_backup_running_flag, _auto_backup_thread_instance 
+    global _auto_backup_running_flag, _auto_backup_thread_instance
     try:
         new_val = int(intervalo_minutos_var.get())
         if new_val > 0:
-            config["intervalo_minutos"] = new_val
-            config_manager.guardar_config(config)
-            # Si el backup automático está activo, reiniciar el timer con el nuevo intervalo
+            config_manager_instance.set_setting("Backup", "intervalo_minutos", new_val) # Guardar entero
             if backup_automatico_var.get() and _auto_backup_running_flag:
+                # Si el backup auto está activo y el intervalo cambia, reinicia el hilo
                 _auto_backup_running_flag = False
                 if _auto_backup_thread_instance and _auto_backup_thread_instance.is_alive():
-                    _auto_backup_thread_instance.join(timeout=0.1) 
-                start_auto_backup_thread() # Reiniciar con el nuevo intervalo
+                    _auto_backup_thread_instance.join(timeout=0.1) # Espera un poco para que termine limpiamente
+                start_auto_backup_thread() # Inicia uno nuevo con el nuevo intervalo
         else:
             messagebox.showwarning(current_texts.get("invalid_input", "Entrada inválida"),
                                    current_texts.get("interval_must_be_positive", "El intervalo debe ser un número positivo."))
+            default_interval = config_manager_instance.get_setting('Backup', 'intervalo_minutos')
+            if default_interval is None: default_interval = 5 # Fallback si no existe en el JSON
+            intervalo_minutos_var.set(default_interval)
     except ValueError:
-        pass 
+        pass # Ignora si el usuario está escribiendo un valor no numérico temporalmente
 intervalo_minutos_var.trace_add("write", on_interval_entry_change)
 
 
@@ -702,14 +843,26 @@ credits_label.pack(side="left", padx=5)
 
 
 # --- Inicio y bucle principal ---
-root.update_idletasks() 
+root.update_idletasks()
 
-root.after(100, update_ui_texts) 
+# Llamar a update_ui_texts una vez al inicio para establecer todos los textos y el estado inicial del modo.
+# Esto es importante porque algunas configuraciones como el modo de apariencia pueden afectar los colores iniciales.
+root.after(100, update_ui_texts)
 
-# No necesitamos esta llamada aquí, ya que update_ui_texts la hace
-# root.after(0, update_auto_backup_timer_ui) 
-
+# Después de que la UI se haya inicializado y los textos estén cargados,
+# verificar si el backup automático debe iniciar.
 if backup_automatico_var.get():
-    start_auto_backup_thread()
+    # Leer la lista directamente
+    selected_for_auto = config_manager_instance.get_setting("Backup", "partidas_auto_backup") or []
+
+    if selected_for_auto:
+        start_auto_backup_thread()
+    else:
+        # Puesto que auto_backup_var ya es True, necesitamos mostrar el diálogo
+        # para que el usuario seleccione las partidas.
+        messagebox.showinfo(current_texts.get("auto_backup_info_title", "Información de Backup Automático"),
+                             current_texts.get("auto_backup_first_time_select", "El backup automático está habilitado, pero no hay partidas seleccionadas. Por favor, selecciona las partidas para respaldar."))
+        show_select_auto_backup_dialog()
+
 
 root.mainloop()
