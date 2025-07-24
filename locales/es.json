@@ -1,5 +1,5 @@
 {
-    "title": "SV R.E.P.O Gerenciador de Salvamentos",
+    "title": "SV R.E.P.O Gestor De Respaldos",
     "backup_now": "Crear Backup",
     "restore": "Restaurar Backup",
     "select_backup_folder": "Seleccionar carpeta para guardar backup",
